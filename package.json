@@ -1,0 +1,66 @@
+{
+  "name": "medflow-hms",
+  "version": "1.0.0",
+  "description": "MedFlow Hospital Management System",
+  "main": "main.js",
+  "author": "MedFlow",
+  "scripts": {
+    "dev": "concurrently \"npm run dev:frontend\" \"npm run dev:backend\" \"npm run dev:electron\"",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && node server.js",
+    "dev:electron": "wait-on http://localhost:3000 && electron .",
+    "build:frontend": "cd frontend && npm run build",
+    "build:electron": "electron-builder",
+    "rebuild": "electron-rebuild -f -w sqlite3",
+    "dist": "npm run build:frontend && npm run build:electron"
+  },
+  "devDependencies": {
+    "@electron/rebuild": "^3.6.0",
+    "concurrently": "^8.2.2",
+    "cross-env": "^10.1.0",
+    "electron": "31.0.0",
+    "electron-builder": "^24.13.3",
+    "electron-packager": "^17.1.2",
+    "wait-on": "^7.2.0"
+  },
+  "dependencies": {
+    "bcryptjs": "^3.0.3",
+    "body-parser": "^2.2.2",
+    "cors": "^2.8.6",
+    "dotenv": "^17.2.3",
+    "express": "^5.2.1",
+    "jsonwebtoken": "^9.0.3",
+    "nodemailer": "^8.0.0",
+    "multer": "^2.0.2",
+    "sqlite": "^5.1.1",
+    "sqlite3": "5.1.7"
+  },
+  "build": {
+    "appId": "com.medflow.hms",
+    "productName": "MedFlow HMS",
+    "npmRebuild": false,
+    "directories": {
+      "output": "dist-electron"
+    },
+    "files": [
+      "main.js",
+      "backend/**/*",
+      "frontend/dist/**/*",
+      "database.sqlite",
+      "node_modules/**/*"
+    ],
+    "win": {
+      "target": "portable",
+      "artifactName": "MedFlow_HMS_${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "MedFlow_HMS_${version}.${ext}"
+    },
+    "extraResources": [
+      {
+        "from": "database.sqlite",
+        "to": "../database.sqlite"
+      }
+    ]
+  }
+}

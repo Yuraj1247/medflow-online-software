@@ -1,0 +1,34 @@
+--- SERVER STARTING ---
+[dotenv@17.2.3] injecting env (1) from .env -- tip: ⚙️  write to custom object with { processEnv: myObject }
+--- DOTENV LOADED ---
+--- SERVER VERSION: 1.0.1 ---
+Doctor Routes Loaded: function
+Loaded secure JWT Secret from database.
+Auto-assigned orphaned records to: Dr. Rakesh
+Database initialized successfully
+Subscription Status: ACTIVE
+Server running on http://0.0.0.0:5999
+Ready for LAN connections.
+Doctor Router: POST /page-settings
+POST /page-settings body: {
+  doctor_id: 'test-id',
+  paper_size: 'A4',
+  header_enabled: 1,
+  margin_top_cm: 2,
+  margin_left_cm: 2,
+  margin_right_cm: 2,
+  margin_bottom_cm: 2
+}
+Error: SQLITE_CONSTRAINT: FOREIGN KEY constraint failed
+--> in Statement#run([ 'test-id', 'A4', 1, 2, 2, 2, 2 ], [Function: replacement])
+    at Database.<anonymous> (C:\Users\yuraj\Downloads\MEDFLOW HMS SOFTWARE OFFCIAL CODE\backend\node_modules\sqlite3\lib\sqlite3.js:76:19)
+    at Database.<anonymous> (C:\Users\yuraj\Downloads\MEDFLOW HMS SOFTWARE OFFCIAL CODE\backend\node_modules\sqlite3\lib\sqlite3.js:20:19)
+    at C:\Users\yuraj\Downloads\MEDFLOW HMS SOFTWARE OFFCIAL CODE\backend\node_modules\sqlite\build\Database.js:96:21
+    at new Promise (<anonymous>)
+    at Database.run (C:\Users\yuraj\Downloads\MEDFLOW HMS SOFTWARE OFFCIAL CODE\backend\node_modules\sqlite\build\Database.js:94:16)
+    at C:\Users\yuraj\Downloads\MEDFLOW HMS SOFTWARE OFFCIAL CODE\backend\routes\doctor.js:58:18
+    at process.processTicksAndRejections (node:internal/process/task_queues:105:5) {
+  errno: 19,
+  code: 'SQLITE_CONSTRAINT',
+  __augmented: true
+}
