@@ -1,261 +1,212 @@
-const sqlite3 = require('sqlite3').verbose();
-const { open } = require('sqlite');
+const pg = require('pg');
 const path = require('path');
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
-
 const fs = require('fs');
 
-// 1. Determine Persistent Storage Path
-// Use Electron's official userData path when available, fallback to a local folder for dev/node
-let storagePath;
-let isElectron = false;
-try {
-    const electron = require('electron');
-    const app = electron.app;
-    if (app) {
-        // Use AppData path directly to avoid differences due to electron app names
-        storagePath = path.join(app.getPath('appData'), 'medflow-hms');
-        isElectron = true;
-    } else {
-        // Fallback for running with plain 'node backend/server.js'
-        storagePath = path.join(process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share"), 'medflow-hms');
-    }
-} catch (e) {
-    // If require('electron') fails or app is not found
-    storagePath = path.join(process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + '/Library/Preferences' : process.env.HOME + "/.local/share"), 'medflow-hms');
-}
+// PostgreSQL Pool setup
+const pool = new pg.Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DATABASE_URL && process.env.DATABASE_URL.includes('localhost')
+    ? false
+    : { rejectUnauthorized: false }
+});
 
-// 2. Ensure storage directory exists
+// For local/temp uploads (ephemeral disk storage on Render)
+const storagePath = path.join(process.cwd(), 'uploads');
 if (!fs.existsSync(storagePath)) {
-    try {
-        fs.mkdirSync(storagePath, { recursive: true });
-    } catch (err) {
-        console.error('Failed to create storage directory:', err);
-    }
+  try {
+    fs.mkdirSync(storagePath, { recursive: true });
+  } catch (err) {
+    console.error('Failed to create storage directory:', err);
+  }
 }
 
-// 3. Define the permanent Database Path
-const DB_PATH = process.env.MEDFLOW_DB_PATH || path.join(storagePath, 'database.sqlite');
-const OLD_DB_PATH = path.join(__dirname, '..', 'database.sqlite');
+const DB_PATH = path.join(process.cwd(), 'database.sqlite'); // Dummy path for compatibility checks
+const SALT_ROUNDS = 12;
 
-// 4. Persistence Check: Migrate existing database if it exists in the old path
-// This ensures "Existing users persist" requirement is met during transition
-if (!fs.existsSync(DB_PATH) && fs.existsSync(OLD_DB_PATH)) {
-    console.log(`[DB] Migrating existing database from ${OLD_DB_PATH} to ${DB_PATH}`);
-    try {
-        fs.copyFileSync(OLD_DB_PATH, DB_PATH);
-        console.log('[DB] Migration successful');
-    } catch (err) {
-        console.error('[DB] Migration failed:', err);
+// Case mapping for SQLite/PostgreSQL column names
+const COLUMN_CASE_MAP = {
+  usertype: 'userType',
+  firstname: 'firstName',
+  middlename: 'middleName',
+  lastname: 'lastName',
+  birthdate: 'birthDate',
+  referredby: 'referredBy',
+  paymentby: 'paymentBy',
+  consultantname: 'consultantName',
+  idprooftype: 'idProofType',
+  idproofnumber: 'idProofNumber',
+  purposeofvisit: 'purposeOfVisit',
+  visitcount: 'visitCount',
+  createdat: 'createdAt',
+  nextvisitdate: 'nextVisitDate',
+  printsettings: 'printSettings',
+  doctor_id: 'doctor_id',
+  medicinename: 'medicineName',
+  billno: 'billNo',
+  patientname: 'patientName',
+  paymentmode: 'paymentMode',
+  discounttype: 'discountType',
+  discountvalue: 'discountValue'
+};
+
+function restoreCasing(row) {
+  if (!row) return row;
+  const newRow = {};
+  for (const [key, val] of Object.entries(row)) {
+    const mappedKey = COLUMN_CASE_MAP[key] || key;
+    if (val instanceof Date) {
+      newRow[mappedKey] = val.toISOString();
+    } else {
+      newRow[mappedKey] = val;
     }
+  }
+  return newRow;
 }
 
-// 5. Official Path Logging
-console.log('===========================================');
-console.log('       SQLITE DATABASE INITIALIZATION      ');
-console.log('===========================================');
-console.log('  Mode:         ', isElectron ? 'Electron Main Process' : 'Standalone Node.js');
-console.log('  Storage Path: ', storagePath);
-console.log('  Database:     ', DB_PATH);
-console.log('===========================================');
+// Convert SQLite query syntax and parameters to PostgreSQL
+function convertQuery(sql, params = []) {
+  if (typeof sql !== 'string') return sql;
+  let convertedSql = sql;
 
-const SALT_ROUNDS = 10;
+  // Replace SQLite date('now') with CURRENT_DATE
+  convertedSql = convertedSql.replace(/date\(\s*['"]now['"]\s*\)/gi, 'CURRENT_DATE');
 
-let db;
-let cachedJwtSecret = null;
+  // Replace SQLite datetime('now') with CURRENT_TIMESTAMP
+  convertedSql = convertedSql.replace(/datetime\(\s*['"]now['"]\s*\)/gi, 'CURRENT_TIMESTAMP');
+
+  // Replace COLLATE NOCASE
+  convertedSql = convertedSql.replace(/COLLATE\s+NOCASE/gi, '');
+
+  // Convert LIKE to ILIKE for case-insensitive searching, matching SQLite behavior
+  convertedSql = convertedSql.replace(/\bLIKE\b/g, 'ILIKE');
+
+  // Replace SQLite parameter placeholders (?) with Postgres ($1, $2, ...)
+  let paramIndex = 1;
+  convertedSql = convertedSql.replace(/\?/g, () => `$${paramIndex++}`);
+
+  return convertedSql;
+}
+
+// Wrapper mimicking sqlite/sqlite3 library for backward compatibility
+const dbMock = {
+  async get(sql, params = []) {
+    const converted = convertQuery(sql, params);
+    const res = await pool.query(converted, params);
+    return restoreCasing(res.rows[0]);
+  },
+  async all(sql, params = []) {
+    const converted = convertQuery(sql, params);
+    const res = await pool.query(converted, params);
+    return res.rows.map(restoreCasing);
+  },
+  async run(sql, params = []) {
+    let converted = convertQuery(sql, params);
+    
+    // Auto-append RETURNING * for inserts to capture auto-incremented lastID
+    const isInsert = converted.trim().toUpperCase().startsWith('INSERT');
+    if (isInsert && !/returning/i.test(converted)) {
+      converted += ' RETURNING *';
+    }
+
+    const res = await pool.query(converted, params);
+    let lastID = null;
+    
+    if (isInsert && res.rows && res.rows.length > 0) {
+      const row = res.rows[0];
+      // Try to find generating key
+      lastID = row.id || row.billno || row.uhid || row.key || Object.values(row)[0];
+    }
+
+    return {
+      lastID,
+      changes: res.rowCount
+    };
+  },
+  async exec(sql) {
+    const converted = convertQuery(sql);
+    // Ignore PRAGMAs or sqlite-specific commands
+    if (converted.trim().toUpperCase().startsWith('PRAGMA') || converted.trim().toUpperCase().startsWith('VACUUM')) {
+      return;
+    }
+    await pool.query(converted);
+  }
+};
 
 async function getJwtSecret() {
-  if (cachedJwtSecret) return cachedJwtSecret;
-  if (!db) await getDB();
-  const result = await db.get('SELECT jwt_secret FROM app_config WHERE id = 1');
-  if (result) {
-    cachedJwtSecret = result.jwt_secret;
-    return cachedJwtSecret;
-  }
-  throw new Error('JWT Secret not initialized');
+  if (process.env.JWT_SECRET) return process.env.JWT_SECRET;
+  throw new Error('JWT_SECRET environment variable is missing.');
 }
 
 async function getDB() {
-  if (db) return db;
+  return dbMock;
+}
 
-  // Use absolute path for SQLite
-  console.log(`Connecting to database at: ${DB_PATH}`);
-  
-  db = await open({
-    filename: DB_PATH,
-    driver: sqlite3.Database
-  });
+// Audit logging utility
+async function logAudit(req, action, module, description, userId = null, username = null, role = null) {
+  try {
+    const finalUserId = userId || req?.user?.id || 'SYSTEM';
+    const finalUsername = username || req?.user?.username || 'system';
+    const finalRole = role || req?.user?.role || 'SYSTEM';
+    const ipAddress = req ? (req.ip || req.headers?.['x-forwarded-for'] || req.socket?.remoteAddress || '') : '';
 
-  // Set a busy timeout to wait for locks to clear (5 seconds)
-  await db.exec('PRAGMA busy_timeout = 5000');
-
-  // Enable WAL mode for better concurrency and fewer "Database is locked" errors
-  await db.exec('PRAGMA journal_mode = WAL');
-
-  return db;
+    await dbMock.run(
+      `INSERT INTO audit_logs (user_id, username, role, action, module, description, ip_address)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      [finalUserId, finalUsername, finalRole.toUpperCase(), action, module, description, ipAddress]
+    );
+  } catch (err) {
+    console.error('Audit Log Error:', err);
+  }
 }
 
 async function initDB() {
-  const db = await getDB();
-
-  // Enable Foreign Keys
-  await db.exec('PRAGMA foreign_keys = ON');
-
-  // 1. Create Tables
-
+  console.log('===========================================');
+  console.log('     POSTGRESQL DATABASE INITIALIZATION    ');
+  console.log('===========================================');
+  
+  // 1. Create Tables in PostgreSQL
+  
   // Users Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS users (
       id TEXT PRIMARY KEY,
       username TEXT UNIQUE,
       name TEXT NOT NULL,
-      role TEXT NOT NULL COLLATE NOCASE,
+      role TEXT NOT NULL,
       designation TEXT,
       password_hash TEXT,
       is_active INTEGER DEFAULT 1,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Developer Security Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS developer_security (
       key TEXT PRIMARY KEY,
       value_hash TEXT NOT NULL,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Patient Documents (Digilocker) Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS patient_documents (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       uhid TEXT NOT NULL,
       default_name TEXT NOT NULL,
       custom_name TEXT NOT NULL,
       file_path TEXT NOT NULL,
       mime_type TEXT,
       file_size INTEGER,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // Migration / Schema Updates for existing installations
-  const getColumns = async (tableName) => {
-    const info = await db.all(`PRAGMA table_info(${tableName})`);
-    return info.map(c => c.name);
-  };
-
-  let currentColumns = await getColumns('users');
-
-  if (!currentColumns.includes('username')) {
-    try {
-      await db.exec(`ALTER TABLE users ADD COLUMN username TEXT`);
-      await db.exec(`UPDATE users SET username = id WHERE username IS NULL`);
-      await db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_users_username ON users(username)`);
-      console.log('Migrated username column');
-      currentColumns = await getColumns('users');
-    } catch (e) {
-      console.warn("Migration warning (username):", e.message);
-    }
-  }
-
-  if (!currentColumns.includes('password_hash')) {
-    try {
-      await db.exec(`ALTER TABLE users ADD COLUMN password_hash TEXT`);
-
-      // Check if old 'pin' column exists and migrate
-      if (currentColumns.includes('pin')) {
-        const users = await db.all('SELECT id, pin FROM users');
-        for (const u of users) {
-          if (u.pin) {
-            const hash = await bcrypt.hash(u.pin, SALT_ROUNDS);
-            await db.run('UPDATE users SET password_hash = ?, pin = NULL WHERE id = ?', [hash, u.id]);
-          }
-        }
-        console.log('Migrated PINs to hashed passwords');
-      }
-      currentColumns = await getColumns('users');
-    } catch (e) { console.warn("Migration warning (password_hash):", e.message); }
-  }
-
-  // Legacy PIN cleanup: Drop the column if it exists to prevent NOT NULL constraints
-  if (currentColumns.includes('pin')) {
-    try {
-      await db.exec('ALTER TABLE users DROP COLUMN pin');
-      console.log('Dropped legacy "pin" column');
-      currentColumns = await getColumns('users');
-    } catch (e) {
-      console.warn("Could not drop 'pin' column (might be needed by legacy, or SQLite version old):", e.message);
-      // If we can't drop it, at least remove the NOT NULL constraint? 
-      // SQLite doesn't support altering constraints easily.
-      // We rely on the app to handle it or the DROP to work.
-    }
-  }
-
-  if (!currentColumns.includes('is_active')) {
-    try {
-      await db.exec(`ALTER TABLE users ADD COLUMN is_active INTEGER DEFAULT 1`);
-      console.log('Added is_active column');
-      currentColumns = await getColumns('users');
-    } catch (e) { console.error("Migration error (is_active):", e.message); }
-  }
-
-  if (!currentColumns.includes('created_at')) {
-    try {
-      await db.exec(`ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT CURRENT_TIMESTAMP`);
-      console.log('Added created_at column');
-    } catch (e) {
-      console.error("Migration error (created_at):", e.message);
-      try {
-        await db.exec(`ALTER TABLE users ADD COLUMN created_at TEXT`);
-        console.log('Added created_at (no default)');
-      } catch (e2) {
-        console.error("Critical Migration failure (created_at):", e2.message);
-      }
-    }
-    currentColumns = await getColumns('users');
-  }
-
-  // Ensure all existing user roles are in UPPERCASE
-  try {
-    await db.exec("UPDATE users SET role = UPPER(role)");
-    console.log('[DB] Migrated all user roles to UPPERCASE');
-  } catch (e) {
-    console.warn("[DB] Migration warning (uppercase roles):", e.message);
-  }
-
-  // Patients Table Migration
-  const currentPatientsColumns = await getColumns('patients');
-  if (!currentPatientsColumns.includes('visitCount')) {
-    try {
-      await db.exec(`ALTER TABLE patients ADD COLUMN visitCount INTEGER DEFAULT 0`);
-      console.log('Added visitCount column to patients table');
-    } catch (e) { console.error("Migration error (visitCount):", e.message); }
-  }
-
-  // Location and New Fields Migration
-  const columnsToAdd = ['state', 'city', 'taluka', 'email', 'middleName', 'idProofNumber', 'idProofType', 'purposeOfVisit'];
-  for (const col of columnsToAdd) {
-    if (!currentPatientsColumns.includes(col)) {
-      try {
-        await db.exec(`ALTER TABLE patients ADD COLUMN ${col} TEXT`);
-        console.log(`Added ${col} column to patients table`);
-      } catch (e) { console.error(`Migration error (${col}):`, e.message); }
-    }
-  }
-
-  const currentVisitsColumns = await getColumns('visits');
-  if (!currentVisitsColumns.includes('nextVisitDate')) {
-    try {
-      await db.exec(`ALTER TABLE visits ADD COLUMN nextVisitDate TEXT`);
-      console.log('Added nextVisitDate column to visits table');
-    } catch (e) { console.error("Migration error (nextVisitDate):", e.message); }
-  }
-
   // Patients Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS patients (
       uhid TEXT PRIMARY KEY,
       date TEXT,
@@ -280,15 +231,15 @@ async function initDB() {
       idProofNumber TEXT,
       purposeOfVisit TEXT,
       visitCount INTEGER DEFAULT 0,
-      createdAt TEXT DEFAULT CURRENT_TIMESTAMP
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Visits (Clinical Data) Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS visits (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      uhid TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      uhid TEXT NOT NULL REFERENCES patients(uhid) ON DELETE CASCADE,
       date TEXT NOT NULL,
       visitCount INTEGER,
       complaint TEXT,
@@ -307,54 +258,43 @@ async function initDB() {
       height TEXT,
       weight TEXT,
       bmi TEXT,
-      printSettings TEXT, -- JSON string
-      nextVisitDate TEXT,
-      FOREIGN KEY(uhid) REFERENCES patients(uhid) ON DELETE CASCADE
+      printSettings TEXT,
+      nextVisitDate TEXT
     );
   `);
 
   // Doctor Page Settings Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS doctor_page_settings (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      doctor_id TEXT UNIQUE NOT NULL,
+      id SERIAL PRIMARY KEY,
+      doctor_id TEXT UNIQUE NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       paper_size TEXT DEFAULT 'A4',
       header_enabled INTEGER DEFAULT 1,
       margin_top_cm REAL DEFAULT 2.0,
       margin_left_cm REAL DEFAULT 2.0,
       margin_right_cm REAL DEFAULT 2.0,
       margin_bottom_cm REAL DEFAULT 2.0,
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(doctor_id) REFERENCES users(id) ON DELETE CASCADE
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // Migrate any legacy A2 page size selections to A5
-  try {
-    await db.run("UPDATE doctor_page_settings SET paper_size = 'A5' WHERE paper_size = 'A2'");
-  } catch (e) {
-    console.warn("Migration warning (doctor_page_settings A2 to A5):", e.message);
-  }
-
   // Prescriptions Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS prescriptions (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      visit_id INTEGER,
-      uhid TEXT NOT NULL,
+      id SERIAL PRIMARY KEY,
+      visit_id INTEGER REFERENCES visits(id) ON DELETE CASCADE,
+      uhid TEXT NOT NULL REFERENCES patients(uhid) ON DELETE CASCADE,
       medicineName TEXT,
       type TEXT,
       dosage TEXT,
       instruction TEXT,
       days INTEGER,
-      date TEXT,
-      FOREIGN KEY(visit_id) REFERENCES visits(id) ON DELETE CASCADE,
-      FOREIGN KEY(uhid) REFERENCES patients(uhid) ON DELETE CASCADE
+      date TEXT
     );
   `);
 
   // Medicines Master Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS medicines (
       id TEXT PRIMARY KEY,
       name TEXT NOT NULL,
@@ -364,10 +304,10 @@ async function initDB() {
   `);
 
   // Bills Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS bills (
       billNo TEXT PRIMARY KEY,
-      uhid TEXT,
+      uhid TEXT REFERENCES patients(uhid) ON DELETE SET NULL,
       patientName TEXT,
       date TEXT,
       consultant TEXT,
@@ -376,14 +316,13 @@ async function initDB() {
       discountType TEXT,
       discountValue REAL,
       visitCount INTEGER,
-      items TEXT, -- JSON Array of BillItem
-      createdAt TEXT DEFAULT CURRENT_TIMESTAMP,
-      FOREIGN KEY(uhid) REFERENCES patients(uhid) ON DELETE SET NULL
+      items TEXT,
+      createdAt TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Master Data
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS master_data (
       key TEXT PRIMARY KEY,
       value TEXT
@@ -391,7 +330,7 @@ async function initDB() {
   `);
 
   // Roles Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS roles (
       id TEXT PRIMARY KEY,
       name TEXT,
@@ -399,8 +338,8 @@ async function initDB() {
     );
   `);
 
-  // Subscription Table (Only one row allowed)
-  await db.exec(`
+  // Subscription Table
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS subscription (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       is_lifetime INTEGER DEFAULT 0,
@@ -408,84 +347,114 @@ async function initDB() {
       end_date TEXT,
       last_checked_date TEXT,
       status TEXT DEFAULT 'ACTIVE',
-      updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Developer Configuration Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS developer_config (
       id INTEGER PRIMARY KEY CHECK (id = 1),
       developer_email TEXT NOT NULL,
-      admin_email TEXT,
-      gmail_user TEXT,
-      gmail_pass_encrypted TEXT
+      admin_email TEXT
     );
   `);
 
   // Developer OTP Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS developer_otp (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      id SERIAL PRIMARY KEY,
       otp_hash TEXT NOT NULL,
-      expires_at DATETIME NOT NULL,
+      expires_at TIMESTAMP NOT NULL,
       attempts INTEGER DEFAULT 0,
       is_used INTEGER DEFAULT 0,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
   // Developer Sessions Table
-  await db.exec(`
+  await dbMock.exec(`
     CREATE TABLE IF NOT EXISTS developer_sessions (
       token TEXT PRIMARY KEY,
-      expires_at DATETIME NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      expires_at TIMESTAMP NOT NULL,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // App Config Table (For Secure JWT Secret)
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS app_config (
+  // Developer Access Table
+  await dbMock.exec(`
+    CREATE TABLE IF NOT EXISTS developer_access (
+      email TEXT UNIQUE,
+      access_code_hash TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  // Clinic Profile Table
+  await dbMock.exec(`
+    CREATE TABLE IF NOT EXISTS clinic_profile (
       id INTEGER PRIMARY KEY CHECK (id = 1),
-      jwt_secret TEXT NOT NULL,
-      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      clinic_name TEXT,
+      hospital_name TEXT,
+      logo TEXT,
+      address TEXT,
+      city TEXT,
+      state TEXT,
+      pincode TEXT,
+      phone TEXT,
+      email TEXT,
+      website TEXT,
+      gst_number TEXT,
+      registration_number TEXT,
+      letterhead_enabled INTEGER DEFAULT 1,
+      footer_text TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+      updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
   `);
 
-  // Migration for subscription table
-  const subColumns = await db.all("PRAGMA table_info(subscription)");
-  const subColumnNames = subColumns.map(c => c.name);
-  if (!subColumnNames.includes('status')) {
-    try {
-      await db.exec(`ALTER TABLE subscription ADD COLUMN status TEXT DEFAULT 'ACTIVE'`);
-    } catch (e) { console.warn("Migration warning (subscription status):", e.message); }
-  }
+  // Audit Logs Table
+  await dbMock.exec(`
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id SERIAL PRIMARY KEY,
+      user_id TEXT,
+      username TEXT,
+      role TEXT,
+      action TEXT,
+      module TEXT,
+      description TEXT,
+      ip_address TEXT,
+      created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
 
-  // Migration for developer_config table
-  const devConfigColumns = await db.all("PRAGMA table_info(developer_config)");
-  const devConfigColumnNames = devConfigColumns.map(c => c.name);
-  if (!devConfigColumnNames.includes('admin_email')) {
-    try {
-      await db.exec(`ALTER TABLE developer_config ADD COLUMN admin_email TEXT`);
-      console.log('Added admin_email column to developer_config');
-    } catch (e) { console.warn("Migration warning (developer_config admin_email):", e.message); }
-  }
+  // 2. Add Indexes
+  await dbMock.exec(`
+    CREATE INDEX IF NOT EXISTS idx_users_username ON users(username);
+    CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
+    CREATE INDEX IF NOT EXISTS idx_patients_mobile ON patients(mobile);
+    CREATE INDEX IF NOT EXISTS idx_patients_consultantname ON patients(consultantname);
+    CREATE INDEX IF NOT EXISTS idx_patients_createdat ON patients(createdat);
+    CREATE INDEX IF NOT EXISTS idx_visits_uhid ON visits(uhid);
+    CREATE INDEX IF NOT EXISTS idx_visits_date ON visits(date);
+    CREATE INDEX IF NOT EXISTS idx_bills_patientname ON bills(patientname);
+    CREATE INDEX IF NOT EXISTS idx_bills_consultant ON bills(consultant);
+    CREATE INDEX IF NOT EXISTS idx_bills_date ON bills(date);
+    CREATE INDEX IF NOT EXISTS idx_subscription_status ON subscription(status);
+  `);
 
-  // Seed Initial Data if empty
-  await seedData(db);
+  // Seed standard data
+  await seedData(dbMock);
 
-  // Purge: If a patient has 0 visits in the visits table, delete the patient record entirely
-  // Using NOT EXISTS for safety against potential NULL uhids in visits table
-  await db.exec(`
+  // Sync calculations matching the original initialization logic
+  await dbMock.exec(`
     DELETE FROM patients
     WHERE NOT EXISTS (
       SELECT 1 FROM visits WHERE visits.uhid = patients.uhid
     )
   `);
-  // Fix-up: Sync visitCount for ALL patients
-  // This ensures accuracy for everyone in the system
-  await db.exec(`
+
+  await dbMock.exec(`
     UPDATE patients
     SET visitCount = (
       SELECT COALESCE(COUNT(*), 0)
@@ -494,104 +463,93 @@ async function initDB() {
     )
   `);
 
-  // Fix-up: Ensure all DOCTORs have 'Dr.' prefix in Name
-  const allDocs = await db.all("SELECT id, name FROM users WHERE role = 'DOCTOR'");
+  // Ensure Doctor name format
+  const allDocs = await dbMock.all("SELECT id, name FROM users WHERE role = 'DOCTOR'");
   for (const doc of allDocs) {
     let name = doc.name.trim();
     if (!name.toLowerCase().startsWith('dr.') && !name.toLowerCase().startsWith('dr ')) {
       const newName = `Dr. ${name}`;
-      await db.run("UPDATE users SET name = ? WHERE id = ?", [newName, doc.id]);
-      await db.run("UPDATE patients SET consultantName = ? WHERE consultantName = ?", [newName, name]);
-      await db.run("UPDATE bills SET consultant = ? WHERE consultant = ?", [newName, name]);
-      console.log(`Updated doctor name: ${name} -> ${newName}`);
+      await dbMock.run("UPDATE users SET name = ? WHERE id = ?", [newName, doc.id]);
+      await dbMock.run("UPDATE patients SET consultantName = ? WHERE consultantName = ?", [newName, name]);
+      await dbMock.run("UPDATE bills SET consultant = ? WHERE consultant = ?", [newName, name]);
     } else if (name.toLowerCase().startsWith('dr ')) {
       const newName = `Dr. ${name.substring(3).trim()}`;
-      await db.run("UPDATE users SET name = ? WHERE id = ?", [newName, doc.id]);
-      await db.run("UPDATE patients SET consultantName = ? WHERE consultantName = ?", [newName, name]);
-      await db.run("UPDATE bills SET consultant = ? WHERE consultant = ?", [newName, name]);
+      await dbMock.run("UPDATE users SET name = ? WHERE id = ?", [newName, doc.id]);
+      await dbMock.run("UPDATE patients SET consultantName = ? WHERE consultantName = ?", [newName, name]);
+      await dbMock.run("UPDATE bills SET consultant = ? WHERE consultant = ?", [newName, name]);
     }
   }
 
-  // Auto-Assign Orphaned Records: If only ONE doctor exists, assign all mystery-doctor patients to them
-  const finalDocs = await db.all("SELECT name FROM users WHERE role = 'DOCTOR'");
+  // Auto-Assign Orphaned Records if single doctor exists
+  const finalDocs = await dbMock.all("SELECT name FROM users WHERE role = 'DOCTOR'");
   if (finalDocs.length === 1) {
     const mainDoc = finalDocs[0].name;
-    await db.run("UPDATE patients SET consultantName = ? WHERE consultantName NOT IN (SELECT name FROM users WHERE role = 'DOCTOR')", [mainDoc]);
-    await db.run("UPDATE bills SET consultant = ? WHERE consultant NOT IN (SELECT name FROM users WHERE role = 'DOCTOR')", [mainDoc]);
-    console.log(`Auto-assigned orphaned records to: ${mainDoc}`);
+    await dbMock.run("UPDATE patients SET consultantName = ? WHERE consultantName NOT IN (SELECT name FROM users WHERE role = 'DOCTOR')", [mainDoc]);
+    await dbMock.run("UPDATE bills SET consultant = ? WHERE consultant NOT IN (SELECT name FROM users WHERE role = 'DOCTOR')", [mainDoc]);
   }
 
-  console.log('Database initialized successfully');
+  console.log('PostgreSQL Database initialized successfully');
 }
 
 async function seedData(db) {
-  // Check Users: During database initialization, automatically check if an admin user exists.
-  // Query: SELECT * FROM users WHERE role='admin' LIMIT 1
-  const adminExists = await db.get("SELECT * FROM users WHERE role='admin' LIMIT 1");
-  const adminExistsUpper = await db.get("SELECT * FROM users WHERE role='ADMIN' LIMIT 1");
-  const adminExistsUser = await db.get("SELECT * FROM users WHERE username='admin' OR id='u1' LIMIT 1");
+  // Admin user seed (Pull admin username and password from environment)
+  const adminUsername = process.env.DEFAULT_ADMIN_USERNAME || 'admin';
+  const adminPassword = process.env.DEFAULT_ADMIN_PASSWORD || '$Medflow989200';
+  const adminName = process.env.DEFAULT_ADMIN_NAME || 'Administrator';
 
-  if (adminExists || adminExistsUpper || adminExistsUser) {
-    console.log("[INIT] Admin user already exists");
-  } else {
-    const adminPass = '$Medflow989200';
-    const adminHash = await bcrypt.hash(adminPass, 10);
-    // Create admin user: behave exactly like a manually created admin.
+  const adminExists = await db.get("SELECT * FROM users WHERE role = 'ADMIN' OR username = ? LIMIT 1", [adminUsername]);
+  if (!adminExists) {
+    const adminHash = await bcrypt.hash(adminPassword, SALT_ROUNDS);
     await db.run(
       `INSERT INTO users (id, username, name, role, designation, password_hash) VALUES (?, ?, ?, ?, ?, ?)`,
-      ['u1', 'admin', 'Administrator', 'ADMIN', 'System Admin', adminHash]
+      ['u1', adminUsername, adminName, 'ADMIN', 'System Admin', adminHash]
     );
-    console.log("[INIT] Default admin created successfully");
+    console.log("[INIT] Default admin seeded");
   }
 
-  // Developer Access Table Creation & Seeding
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS developer_access (
-      email TEXT UNIQUE,
-      access_code_hash TEXT,
-      created_at TEXT DEFAULT CURRENT_TIMESTAMP
-    );
-  `);
+  // Developer access seed (Pull developer credentials from environment)
+  const devEmail = process.env.DEFAULT_DEVELOPER_EMAIL || 'gamervibes1240@gmail.com';
+  const devCode = process.env.DEFAULT_DEVELOPER_ACCESS_CODE || 'dev123';
 
-  const devExists = await db.get("SELECT * FROM developer_access WHERE email = ?", ['gamervibes1240@gmail.com']);
-  if (devExists) {
-    // Already present
-  } else {
-    const defaultDevCode = 'dev123';
-    const codeHash = await bcrypt.hash(defaultDevCode, 10);
+  const devExists = await db.get("SELECT * FROM developer_access WHERE email = ?", [devEmail]);
+  if (!devExists) {
+    const codeHash = await bcrypt.hash(devCode, SALT_ROUNDS);
     await db.run(
       "INSERT INTO developer_access (email, access_code_hash) VALUES (?, ?)",
-      ['gamervibes1240@gmail.com', codeHash]
+      [devEmail, codeHash]
     );
-    console.log("[INIT] Developer account seeded successfully");
+    console.log("[INIT] Developer account seeded");
   }
 
-  // Also check and seed developer_config for application/mailer compatibility
+  // Developer config seed (Exclude SMTP secrets)
   const devConfig = await db.get('SELECT * FROM developer_config WHERE id = 1');
   if (!devConfig) {
-    const emailUser = 'gamervibes1240@gmail.com';
-    const emailPass = 'zittlysbwekosjke';
-    const encrypt = (text) => Buffer.from(text).toString('base64');
-
     await db.run(`
-      INSERT INTO developer_config (id, developer_email, gmail_user, gmail_pass_encrypted)
-      VALUES (?, ?, ?, ?)
-    `, [1, 'gamervibes1240@gmail.com', emailUser, encrypt(emailPass)]);
-    console.log("Seeded developer configuration.");
+      INSERT INTO developer_config (id, developer_email)
+      VALUES (?, ?)
+    `, [1, devEmail]);
+    console.log("[INIT] Developer config seeded");
   }
 
-  // Developer Security Code (fallback for legacy components)
+  // Developer security code
   const devSec = await db.get('SELECT * FROM developer_security WHERE key = ?', ['dev_access_code']);
   if (!devSec) {
-    const defaultDevCode = 'dev123';
-    const targetHash = await bcrypt.hash(defaultDevCode, SALT_ROUNDS);
+    const targetHash = await bcrypt.hash(devCode, SALT_ROUNDS);
     await db.run('INSERT INTO developer_security (key, value_hash) VALUES (?, ?)', ['dev_access_code', targetHash]);
-    console.log(`Seeded developer access security entry.`);
+    console.log("[INIT] Developer security seeded");
   }
 
+  // Clinic profile default seed
+  const clinicExists = await db.get('SELECT * FROM clinic_profile WHERE id = 1');
+  if (!clinicExists) {
+    await db.run(`
+      INSERT INTO clinic_profile (id, clinic_name, hospital_name, logo, address, city, state, pincode, phone, email, website, gst_number, registration_number, letterhead_enabled, footer_text)
+      VALUES (1, 'MEDFLOW HOSPITAL', 'SHREE AROGYALAYA HOSPITAL', '', '123, Health Avenue', 'Mumbai', 'Maharashtra', '400001', '+91 98765 43210', 'email@domain.com', 'www.domain.com', '', '', 1, 'Thank you for choosing us.')
+    `);
+    console.log("[INIT] Default clinic profile seeded");
+  }
 
-
-  // Check Medicines
+  // Medicines seed
   const med = await db.get('SELECT * FROM medicines LIMIT 1');
   if (!med) {
     const meds = [
@@ -611,7 +569,7 @@ async function seedData(db) {
     }
   }
 
-  // Check Roles
+  // Roles seed
   const role = await db.get('SELECT * FROM roles LIMIT 1');
   if (!role) {
     const roles = [
@@ -624,7 +582,7 @@ async function seedData(db) {
     }
   }
 
-  // Seed Default Master Data - COMPREHENSIVE SEED to prevent frontend crashes
+  // Master defaults seed
   const masterDefaults = [
     ['totalPatientLimit', 0],
     ['enablePatientLimit', true],
@@ -688,7 +646,7 @@ async function seedData(db) {
       "Ladakh": ["Leh", "Kargil"],
       "Lakshadweep": ["Kavaratti"],
       "Madhya Pradesh": ["Indore", "Bhopal", "Jabalpur", "Gwalior", "Ujjain", "Sagar", "Dewas", "Satna", "Ratlam", "Rewa"],
-      "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Thane", "Pimpri-Chinchwad", "Nashik", "Kalyan-Dombivli", "Vasai-Virar", "Aurangabad", "Navi Mumbai", "Solapur", "Mira-Bhayandar", "Bhiwandi", "Amravati", "Nanded", "Kolhapur", "Akola", "Panvel", "Ulhasnagar", "Sangli", "Malegaon", "Jalgaon", "Latur", "Dhule", "Ahmednagar", "Chandrapur", "Parbhani", "Ichalkaranji", "Jalna", "Ambarnath", "Bhusawal", "Panvel", "Badlapur", "Beed", "Gondia", "Satara", "Barshi", "Yavatmal", "Achalpur", "Osmanabad", "Nandurbar", "Wardha", "Udgir", "Hinganghat"],
+      "Maharashtra": ["Mumbai", "Pune", "Nagpur", "Thane", "Pimpri-Chinchwad", "Nashik", "Kalyan-Dombivli", "Vasai-Virar", "Aurangabad", "Navi Mumbai", "Solapur", "Mira-Bhayandar", "Bhiwandi", "Amravati", "Nanded", "Kolhapur", "Akola", "Panvel", "Ulhasnagar", "Sangli", "Malegaon", "Jalgaon", "Latur", "Dhule", "Ahmednagar", "Chandrapur", "Parbhani", "Ichalkaranji", "Jalna", "Ambarnath", "Bhusawal", "Panvel", "Badlapur", "Beed", "Gondia", "Satara", "Barshi", "Yavatmal", "Osmanabad", "Nandurbar", "Wardha", "Udgir", "Hinganghat"],
       "Manipur": ["Imphal"],
       "Meghalaya": ["Shillong", "Tura"],
       "Mizoram": ["Aizawl"],
@@ -711,46 +669,32 @@ async function seedData(db) {
     const exists = await db.get('SELECT key FROM master_data WHERE key = ?', [key]);
     if (!exists) {
       await db.run('INSERT INTO master_data (key, value) VALUES (?, ?)', [key, JSON.stringify(value)]);
-      console.log(`Seeded Master Setting: ${key}`);
     }
   }
 
-  // Check Subscription
+  // Subscription seed
   const sub = await db.get('SELECT * FROM subscription WHERE id = 1');
   if (!sub) {
     const today = new Date().toISOString().split('T')[0];
     const nextMonth = new Date();
     nextMonth.setDate(nextMonth.getDate() + 30);
     const endDate = nextMonth.toISOString().split('T')[0];
-
-    // Seed with Lifetime Access = 1 (ON) by default as requested
     await db.run(`
       INSERT INTO subscription (id, is_lifetime, start_date, end_date, last_checked_date, status)
       VALUES (?, ?, ?, ?, ?, ?)
-    `, [1, 1, today, endDate, today, 'ACTIVE']);
-    console.log(`Seeded initial subscription (Lifetime: ON).`);
-  }
-
-  // Check App Config (JWT Secret)
-  const appConfig = await db.get('SELECT * FROM app_config WHERE id = 1');
-  if (!appConfig) {
-    const secret = crypto.randomBytes(64).toString('hex');
-    await db.run('INSERT INTO app_config (id, jwt_secret) VALUES (?, ?)', [1, secret]);
-    cachedJwtSecret = secret;
-    console.log('Generatred and stored secure persistent JWT Secret.');
-  } else {
-    cachedJwtSecret = appConfig.jwt_secret;
-    console.log('Loaded secure JWT Secret from database.');
+    `, [1, 0, today, endDate, today, 'ACTIVE']);
+    console.log("[INIT] Subscription seeded (Lifetime: OFF)");
   }
 }
-
-
 
 module.exports = {
   getDB,
   initDB,
   getJwtSecret,
   DB_PATH,
-  storagePath
+  storagePath,
+  pool,
+  convertQuery,
+  logAudit,
+  SALT_ROUNDS
 };
-

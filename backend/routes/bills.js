@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDB } = require('../database');
+const { getDB, logAudit } = require('../database');
 
 // Get All (Recent 100 or Search)
 router.get('/', async (req, res) => {
@@ -53,6 +53,7 @@ router.post('/', async (req, res) => {
                     b.paymentMode, b.discountType, b.discountValue, b.visitCount, JSON.stringify(b.items)
                 ]);
         }
+        await logAudit(req, 'BILL_GENERATED', 'BILLING', `Bill generated/updated: ${b.billNo} for patient: ${b.patientName} (amount: ₹${b.total})`);
         res.json({ message: shouldUpdate ? 'Bill updated' : 'Bill saved' });
     } catch (e) {
         console.error(e);

@@ -1,6 +1,31 @@
+# Dependencies
 node_modules/
+
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Production builds
+dist/
+build/
+
+# Testing & Coverage
+coverage/
+
+# Logs
+logs/
+*.log
+
+# Database files
 *.sqlite
-columns.txt
-out.txt
-diag.js
+*.db
+
+# Uploads & Temp
+uploads/
+temp/
+
+# Editor directories and files
+.vscode/
+.idea/
+.DS_Store

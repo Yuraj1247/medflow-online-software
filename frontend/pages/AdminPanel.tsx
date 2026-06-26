@@ -800,29 +800,164 @@ const GlobalSettingsManager: React.FC<{
                     <FileText className="text-blue-500" size={20} />
                     <h3 className="font-bold text-lg text-white">Hospital / Clinic Profile</h3>
                 </div>
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                    <div className="md:col-span-2">
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                    <div>
+                        <Input
+                            label="Clinic / Branch Name"
+                            value={data.clinicProfile?.clinic_name || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, clinic_name: e.target.value } });
+                            }}
+                            placeholder="e.g. Medflow Branch 1"
+                        />
+                    </div>
+                    <div>
                         <Input
                             label="Hospital Name"
-                            value={data.clinicName || ''}
-                            onChange={(e) => onUpdate({ ...data, clinicName: e.target.value })}
+                            value={data.clinicProfile?.hospital_name || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, hospital_name: e.target.value } });
+                            }}
                             placeholder="e.g. SHREE AROGYALAYA HOSPITAL"
                         />
                     </div>
-                    <div className="md:col-span-2">
+                    <div>
                         <Input
-                            label="Complete Address"
-                            value={data.clinicAddress || ''}
-                            onChange={(e) => onUpdate({ ...data, clinicAddress: e.target.value })}
-                            placeholder="Street, Area, City, Pin Code"
+                            label="Logo URL"
+                            value={data.clinicProfile?.logo || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, logo: e.target.value } });
+                            }}
+                            placeholder="e.g. https://logo.png"
                         />
                     </div>
                     <div className="md:col-span-2">
                         <Input
-                            label="Contact Info (Phone / Email / Website)"
-                            value={data.clinicContact || ''}
-                            onChange={(e) => onUpdate({ ...data, clinicContact: e.target.value })}
-                            placeholder="+91 00000 00000 | email@domain.com"
+                            label="Complete Street Address"
+                            value={data.clinicProfile?.address || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, address: e.target.value } });
+                            }}
+                            placeholder="Street Name, Building, Shop"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="City"
+                            value={data.clinicProfile?.city || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, city: e.target.value } });
+                            }}
+                            placeholder="City"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="State"
+                            value={data.clinicProfile?.state || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, state: e.target.value } });
+                            }}
+                            placeholder="State"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="Pin Code"
+                            value={data.clinicProfile?.pincode || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, pincode: e.target.value } });
+                            }}
+                            placeholder="Pincode"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="Contact Phone"
+                            value={data.clinicProfile?.phone || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, phone: e.target.value } });
+                            }}
+                            placeholder="e.g. +91 98765 43210"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="Contact Email"
+                            value={data.clinicProfile?.email || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, email: e.target.value } });
+                            }}
+                            placeholder="e.g. hospital@domain.com"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="Hospital Website"
+                            value={data.clinicProfile?.website || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, website: e.target.value } });
+                            }}
+                            placeholder="e.g. www.hospital.com"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="GST Number"
+                            value={data.clinicProfile?.gst_number || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, gst_number: e.target.value } });
+                            }}
+                            placeholder="e.g. 27AAAAA0000A1Z5"
+                        />
+                    </div>
+                    <div>
+                        <Input
+                            label="Registration Number"
+                            value={data.clinicProfile?.registration_number || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, registration_number: e.target.value } });
+                            }}
+                            placeholder="e.g. REG-123456"
+                        />
+                    </div>
+                    <div className="flex items-center gap-3 bg-background/50 px-4 py-2 rounded-lg border border-border">
+                        <div className="text-right">
+                            <span className="block text-xs font-bold text-text-muted uppercase">Letterhead</span>
+                            <span className="text-[10px] text-text-muted/70">{data.clinicProfile?.letterhead_enabled ? 'Enabled' : 'Disabled'}</span>
+                        </div>
+                        <button
+                            type="button"
+                            onClick={() => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, letterhead_enabled: cp.letterhead_enabled ? 0 : 1 } });
+                            }}
+                            className={cn("transition-colors", data.clinicProfile?.letterhead_enabled ? "text-primary" : "text-text-muted")}
+                        >
+                            {data.clinicProfile?.letterhead_enabled ? <ToggleRight size={36} /> : <ToggleLeft size={36} />}
+                        </button>
+                    </div>
+                    <div className="md:col-span-3">
+                        <Input
+                            label="Receipt / Letterhead Footer Text"
+                            value={data.clinicProfile?.footer_text || ''}
+                            onChange={(e) => {
+                                const cp = data.clinicProfile || { clinic_name: '', hospital_name: '', logo: '', address: '', city: '', state: '', pincode: '', phone: '', email: '', website: '', gst_number: '', registration_number: '', letterhead_enabled: 1, footer_text: '' };
+                                onUpdate({ ...data, clinicProfile: { ...cp, footer_text: e.target.value } });
+                            }}
+                            placeholder="e.g. Get Well Soon. Please bring this card for follow-up."
                         />
                     </div>
                 </div>

@@ -1817,11 +1817,33 @@ export const PatientSearch: React.FC = () => {
                   {/* Hospital Header */}
                   {settings.header_enabled !== 0 && (
                     <div className="flex justify-between items-start border-b-2 border-gray-800 pb-6 mb-8">
-                      <div>
-                        <h1 className="text-2xl font-heading font-bold text-green-700 uppercase">{masterData?.clinicName || 'SHREE AROGYALAYA HOSPITAL'}</h1>
-                        <div className="mt-2 text-sm text-gray-600 space-y-1">
-                          <p>{masterData?.clinicAddress || '123, Health Avenue, Mumbai - 400001'}</p>
-                          <p>{masterData?.clinicContact || 'Ph: +91 98765 43210'}</p>
+                      <div className="flex items-center gap-4">
+                        {masterData?.clinicProfile?.logo && (
+                          <img 
+                            src={masterData.clinicProfile.logo} 
+                            alt="Logo" 
+                            className="h-16 w-16 object-contain" 
+                            onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                          />
+                        )}
+                        <div>
+                          <h1 className="text-2xl font-heading font-bold text-green-700 uppercase">
+                            {masterData?.clinicProfile?.hospital_name || masterData?.clinicName || 'SHREE AROGYALAYA HOSPITAL'}
+                          </h1>
+                          {masterData?.clinicProfile?.clinic_name && masterData?.clinicProfile?.clinic_name !== masterData?.clinicProfile?.hospital_name && (
+                            <p className="text-sm font-bold text-green-600 uppercase">{masterData.clinicProfile.clinic_name}</p>
+                          )}
+                          <div className="mt-2 text-sm text-gray-600 space-y-1">
+                            <p>{masterData?.clinicAddress || '123, Health Avenue, Mumbai - 400001'}</p>
+                            <p>{masterData?.clinicContact || 'Ph: +91 98765 43210'}</p>
+                            {(masterData?.clinicProfile?.gst_number || masterData?.clinicProfile?.registration_number) && (
+                              <p className="text-xs">
+                                {masterData?.clinicProfile?.gst_number ? `GST: ${masterData.clinicProfile.gst_number}` : ''}
+                                {masterData?.clinicProfile?.gst_number && masterData?.clinicProfile?.registration_number ? ' | ' : ''}
+                                {masterData?.clinicProfile?.registration_number ? `Reg: ${masterData.clinicProfile.registration_number}` : ''}
+                              </p>
+                            )}
+                          </div>
                         </div>
                       </div>
                       <div className="text-right">
@@ -1928,6 +1950,9 @@ export const PatientSearch: React.FC = () => {
                         <li>Payment once made is generally not refundable.</li>
                         <li>This is a computer generated invoice and does not require a physical signature.</li>
                       </ul>
+                      {masterData?.clinicProfile?.footer_text && (
+                        <p className="mt-2 font-medium text-gray-700 italic">{masterData.clinicProfile.footer_text}</p>
+                      )}
                     </div>
                     <div className="text-center">
                       <div className="h-16 w-40 border-b border-black mb-2 flex items-end justify-center"></div>

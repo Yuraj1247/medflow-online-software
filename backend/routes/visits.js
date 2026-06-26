@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDB } = require('../database');
+const { getDB, logAudit } = require('../database');
 
 // Get ALL visits (with patient data joined) — for Search Page
 router.get('/', async (req, res) => {
@@ -166,6 +166,8 @@ router.post('/', async (req, res) => {
         if (maxVisitResult && maxVisitResult.maxV !== null) {
             await db.run('UPDATE patients SET visitCount = ? WHERE uhid = ?', [maxVisitResult.maxV, uhid]);
         }
+
+        await logAudit(req, 'PRESCRIPTION_SAVED', 'PRESCRIPTION', `Prescriptions/Vitals updated/created for patient: ${uhid} (Visit Count: ${visitCount})`);
 
         res.json({ message: existingVisit ? 'Visit Updated' : 'Visit Saved', id: visitId });
     } catch (e) {

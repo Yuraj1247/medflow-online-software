@@ -12,8 +12,50 @@ const app = express();
 const PORT = process.env.PORT || 5000;
 
 // Middleware
-app.use(cors());
+const allowedOrigins = (process.env.NODE_ENV === 'production')
+    ? [process.env.FRONTEND_URL].filter(Boolean)
+    : ['http://localhost:5173', 'http://localhost:3000'].filter(Boolean);
+
+app.use(cors({
+    origin: function (origin, callback) {
+        if (!origin) return callback(null, true);
+        const isAllowed = allowedOrigins.includes(origin) || (process.env.NODE_ENV !== 'production' && origin.startsWith('http://localhost:'));
+        if (isAllowed) {
+            callback(null, true);
+        } else {
+            callback(new Error('Not allowed by CORS'));
+        }
+    },
+    credentials: true
+}));
+
 app.use(bodyParser.json());
+
+// Rate Limiting
+const rateLimit = require('express-rate-limit');
+
+const loginLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000, // 15 minutes
+    max: 15,
+    message: { message: 'Too many login attempts. Please try again after 15 minutes.' }
+});
+
+const otpLimiter = rateLimit({
+    windowMs: 10 * 60 * 1000, // 10 minutes
+    max: 5,
+    message: { message: 'Too many OTP requests. Please try again after 10 minutes.' }
+});
+
+const developerLimiter = rateLimit({
+    windowMs: 15 * 60 * 1000,
+    max: 5,
+    message: { message: 'Too many developer verification attempts. Please try again after 15 minutes.' }
+});
+
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/developer/verify-otp', developerLimiter);
+app.use('/api/developer/request-otp', otpLimiter);
+app.use('/api/developer/request-delete-otp', otpLimiter);
 
 // Routes Imports
 const authRoutes = require('./routes/auth');
@@ -34,12 +76,40 @@ const digilockerRoutes = require('./routes/digilocker');
 // Middleware Import
 const { checkSubscription, verifySubscription } = require('./middleware/subscriptionMiddleware');
 
-app.get('/api/health', (req, res) => {
+const packageJson = require('./package.json');
+const startTime = Date.now();
+
+const getHealthStatus = async () => {
+    let dbStatus = 'connected';
+    try {
+        const { getDB } = require('./database');
+        const db = await getDB();
+        await db.get('SELECT 1');
+    } catch (err) {
+        dbStatus = 'disconnected';
+    }
+    return {
+        status: 'OK',
+        message: 'MedFlow Backend Running',
+        environment: process.env.NODE_ENV || 'production',
+        timestamp: new Date().toISOString(),
+        database: dbStatus
+    };
+};
+
+app.get('/health', async (req, res) => {
+    const health = await getHealthStatus();
+    res.json(health);
+});
+
+app.get('/api/health', async (req, res) => {
+    const health = await getHealthStatus();
+    res.json(health);
+});
+
+app.get('/api/version', (req, res) => {
     res.json({
-        status: 'ok',
-        dbPath: require('./database').DB_PATH,
-        time: new Date().toISOString(),
-        ip: req.ip
+        version: packageJson.version || '1.0.0'
     });
 });
 
@@ -61,16 +131,28 @@ app.use('/api/doctor', checkSubscription, doctorRoutes);
 app.use('/api/analytics', checkSubscription, analyticsRoutes);
 app.use('/api/digilocker', checkSubscription, digilockerRoutes);
 
-// SPA Catch-all (Non-API GET requests)
-const frontendPath = path.join(__dirname, '../frontend/dist');
-app.use(express.static(frontendPath));
+// Serve frontend conditionally in non-production environments
+if (process.env.NODE_ENV !== 'production') {
+    const frontendPath = path.join(__dirname, '../frontend/dist');
+    app.use(express.static(frontendPath));
 
-app.get('/{*path}', (req, res) => {
-    // If it's an API request that reached here, it's a 404
-    if (req.path.startsWith('/api/')) {
-        return res.status(404).json({ error: 'API route not found' });
-    }
-    res.sendFile(path.join(frontendPath, 'index.html'));
+    app.get(/^\/(.*)/, (req, res, next) => {
+        if (req.path.startsWith('/api/')) {
+            return next();
+        }
+        res.sendFile(path.join(frontendPath, 'index.html'), (err) => {
+            if (err) {
+                next();
+            }
+        });
+    });
+}
+
+// Catch-all for undefined routes
+app.use((req, res) => {
+    res.status(404).json({
+        error: 'Endpoint not found'
+    });
 });
 
 // Error Handler

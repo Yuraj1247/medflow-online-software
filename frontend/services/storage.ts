@@ -1,5 +1,5 @@
 
-import { Bill, Medicine, Patient, MasterData, User, RoleDefinition, UserRole, ClinicalPreferences, PrescriptionRecord, DoctorPageSettings, PatientDocument } from "../types";
+import { Bill, Medicine, Patient, MasterData, User, RoleDefinition, UserRole, ClinicalPreferences, PrescriptionRecord, DoctorPageSettings, PatientDocument, ClinicProfile } from "../types";
 import {
   INITIAL_MEDICINES,
   DEFAULT_CONSULTANTS,
@@ -21,11 +21,7 @@ import {
 // For Localhost (Same PC): "http://localhost:5000"
 // For LAN usage: Automatically detects the server IP and port.
 // If running via Vite (port 3000/5173), defaults to backend on port 5000.
-export const API_BASE_URL = typeof window !== 'undefined'
-  ? (window.location.protocol === 'file:' || window.location.port === '3000' || window.location.port === '5173'
-    ? `http://localhost:5000/api`
-    : `${window.location.origin}/api`)
-  : "http://localhost:5000/api";
+export const API_BASE_URL = import.meta.env.VITE_API_URL || '';
 
 const getHeaders = () => {
   const headers: any = { 'Content-Type': 'application/json' };

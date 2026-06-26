@@ -3,24 +3,18 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const crypto = require('crypto');
 const nodemailer = require('nodemailer');
-const { getDB } = require('../database');
-
-// Helpers
-const decrypt = (text) => Buffer.from(text, 'base64').toString('ascii');
+const { getDB, logAudit } = require('../database');
 
 async function getMailTransporter() {
-    const db = await getDB();
-    const config = await db.get('SELECT * FROM developer_config WHERE id = 1');
-    if (!config || !config.gmail_user || !config.gmail_pass_encrypted) {
-        throw new Error("Gmail credentials not configured");
+    const user = process.env.GMAIL_USER;
+    const pass = process.env.GMAIL_PASS;
+    if (!user || !pass) {
+        throw new Error("Gmail credentials (GMAIL_USER, GMAIL_PASS) not configured in environment variables");
     }
 
     return nodemailer.createTransport({
         service: 'gmail',
-        auth: {
-            user: config.gmail_user,
-            pass: decrypt(config.gmail_pass_encrypted)
-        }
+        auth: { user, pass }
     });
 }
 
@@ -42,6 +36,7 @@ router.post('/set-admin-email', async (req, res) => {
         if (!email) return res.status(400).json({ message: "Email is required" });
         const db = await getDB();
         await db.run('UPDATE developer_config SET admin_email = ? WHERE id = 1', [email]);
+        await logAudit(req, 'DEVELOPER_CHANGES', 'DEVELOPER', `Developer configured Admin deletion email to: ${email}`);
         res.json({ message: "Admin email for deletion set successfully" });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -210,6 +205,8 @@ router.post('/verify-otp', async (req, res) => {
 
         await db.run('INSERT INTO developer_sessions (token, expires_at) VALUES (?, ?)', [sessionToken, sessionExpiry]);
 
+        await logAudit(req, 'DEVELOPER_LOGIN', 'DEVELOPER', 'Developer logged in successfully', 'DEV', 'developer', 'DEVELOPER');
+
         res.json({
             success: true,
             sessionToken,
@@ -230,9 +227,10 @@ router.post('/reset-admin-password', async (req, res) => {
         }
 
         const db = await getDB();
-        const passwordHash = await bcrypt.hash(newPassword, 10);
+        const passwordHash = await bcrypt.hash(newPassword, 12);
         
         await db.run('UPDATE users SET password_hash = ? WHERE role = ?', [passwordHash, 'ADMIN']);
+        await logAudit(req, 'DEVELOPER_CHANGES', 'DEVELOPER', 'Developer reset the system Admin password', 'DEV', 'developer', 'DEVELOPER');
         res.json({ message: "Admin password reset successfully" });
     } catch (e) {
         res.status(500).json({ error: e.message });

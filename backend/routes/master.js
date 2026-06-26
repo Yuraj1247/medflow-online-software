@@ -22,11 +22,14 @@ router.get('/', async (req, res) => {
             }
         });
 
-        // If empty (first run), we might want to return empty object and let frontend initialize?
-        // OR the initial seed in db.js handles it?
-        // The db.js seed handled users/medicines. It didn't seed master_data because it's huge.
-        // Frontend has "defaults".
-        // Strategy: Frontend 'getMasterData' checks API. If empty, it sends 'defaults' to save.
+        // Query clinic profile and populate virtual properties for compatibility
+        const profile = await db.get('SELECT * FROM clinic_profile WHERE id = 1');
+        if (profile) {
+            data.clinicName = profile.hospital_name || profile.clinic_name || 'Clinic';
+            data.clinicAddress = `${profile.address}, ${profile.city}, ${profile.state} - ${profile.pincode}`;
+            data.clinicContact = `${profile.phone} | ${profile.email}${profile.website ? ' | ' + profile.website : ''}`;
+            data.clinicProfile = profile;
+        }
 
         res.json(data);
     } catch (e) {
@@ -39,12 +42,38 @@ router.post('/', async (req, res) => {
     const data = req.body; // Expect Key-Value object
     try {
         const db = await getDB();
-        const stmt = await db.prepare('INSERT INTO master_data (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value');
 
         for (const [key, value] of Object.entries(data)) {
-            await stmt.run(key, JSON.stringify(value));
+            if (key === 'clinicProfile' && value) {
+                const cp = value;
+                await db.run(`
+                    INSERT INTO clinic_profile (
+                        id, clinic_name, hospital_name, logo, address, city, state, pincode, phone, email, website, gst_number, registration_number, letterhead_enabled, footer_text
+                    ) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    ON CONFLICT (id) DO UPDATE SET
+                        clinic_name = excluded.clinic_name,
+                        hospital_name = excluded.hospital_name,
+                        logo = excluded.logo,
+                        address = excluded.address,
+                        city = excluded.city,
+                        state = excluded.state,
+                        pincode = excluded.pincode,
+                        phone = excluded.phone,
+                        email = excluded.email,
+                        website = excluded.website,
+                        gst_number = excluded.gst_number,
+                        registration_number = excluded.registration_number,
+                        letterhead_enabled = excluded.letterhead_enabled,
+                        footer_text = excluded.footer_text,
+                        updated_at = CURRENT_TIMESTAMP
+                `, [
+                    cp.clinic_name || '', cp.hospital_name || '', cp.logo || '', cp.address || '', cp.city || '', cp.state || '', cp.pincode || '',
+                    cp.phone || '', cp.email || '', cp.website || '', cp.gst_number || '', cp.registration_number || '', cp.letterhead_enabled !== undefined ? cp.letterhead_enabled : 1, cp.footer_text || ''
+                ]);
+            } else {
+                await db.run('INSERT INTO master_data (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value', [key, JSON.stringify(value)]);
+            }
         }
-        await stmt.finalize();
 
         res.json({ message: 'Master Data Updated' });
     } catch (e) {

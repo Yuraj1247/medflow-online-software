@@ -2,9 +2,8 @@ const express = require('express');
 const router = express.Router();
 const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
-const { getDB, getJwtSecret } = require('../database');
-
-
+const { getDB, getJwtSecret, logAudit } = require('../database');
+const { authenticateToken } = require('../middleware/authMiddleware');
 
 // Login
 router.post('/login', async (req, res) => {
@@ -42,6 +41,9 @@ router.post('/login', async (req, res) => {
             { expiresIn: '12h' }
         );
 
+        // Audit Log Login
+        await logAudit(req, 'LOGIN', 'AUTH', `User logged in: ${user.username} (${user.role})`, user.id, user.username, user.role);
+
         // Remove password hash and potential legacy pin from response
         const { password_hash, pin, ...userSafe } = user;
         if (userSafe.role) {
@@ -49,6 +51,16 @@ router.post('/login', async (req, res) => {
         }
 
         res.json({ token, user: userSafe });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Logout
+router.post('/logout', authenticateToken, async (req, res) => {
+    try {
+        await logAudit(req, 'LOGOUT', 'AUTH', `User logged out: ${req.user.username}`);
+        res.json({ success: true, message: 'Logged out successfully' });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -88,7 +100,7 @@ router.post('/update-developer-code', async (req, res) => {
             return res.status(401).json({ message: 'Current code is incorrect' });
         }
 
-        const newHash = await bcrypt.hash(newCode, 10);
+        const newHash = await bcrypt.hash(newCode, 12);
         await db.run('UPDATE developer_security SET value_hash = ? WHERE key = ?', [newHash, 'dev_access_code']);
 
         res.json({ message: 'Developer Security Code Updated' });

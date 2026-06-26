@@ -1415,11 +1415,33 @@ Patient has been called for followup on ${clinicalData.nextVisitDate ? formatDat
                                 {/* Clinic Header - Conditionally Hidden */}
                                 {settings.header_enabled !== 0 && (
                                     <div className="flex justify-between items-center border-b-4 border-green-700 pb-4 mb-6">
-                                        <div>
-                                            <h1 className="text-3xl font-bold text-green-700 tracking-tight uppercase">{masterData?.clinicName || 'SHREE AROGYALAYA HOSPITAL'}</h1>
-                                            <div className="text-sm text-gray-600 mt-1 space-y-0.5">
-                                                <p>{masterData?.clinicAddress || '123, Health Avenue, Mumbai - 400001'}</p>
-                                                <p>{masterData?.clinicContact || 'Ph: +91 98765 43210'}</p>
+                                        <div className="flex items-center gap-4">
+                                            {masterData?.clinicProfile?.logo && (
+                                                <img 
+                                                    src={masterData.clinicProfile.logo} 
+                                                    alt="Logo" 
+                                                    className="h-16 w-16 object-contain" 
+                                                    onError={(e) => { e.currentTarget.style.display = 'none'; }}
+                                                />
+                                            )}
+                                            <div>
+                                                <h1 className="text-3xl font-bold text-green-700 tracking-tight uppercase">
+                                                    {masterData?.clinicProfile?.hospital_name || masterData?.clinicName || 'SHREE AROGYALAYA HOSPITAL'}
+                                                </h1>
+                                                {masterData?.clinicProfile?.clinic_name && masterData?.clinicProfile?.clinic_name !== masterData?.clinicProfile?.hospital_name && (
+                                                    <p className="text-md font-bold text-green-600 uppercase">{masterData.clinicProfile.clinic_name}</p>
+                                                )}
+                                                <div className="text-sm text-gray-600 mt-1 space-y-0.5">
+                                                    <p>{masterData?.clinicAddress || '123, Health Avenue, Mumbai - 400001'}</p>
+                                                    <p>{masterData?.clinicContact || 'Ph: +91 98765 43210'}</p>
+                                                    {(masterData?.clinicProfile?.gst_number || masterData?.clinicProfile?.registration_number) && (
+                                                        <p className="text-xs">
+                                                            {masterData?.clinicProfile?.gst_number ? `GST: ${masterData.clinicProfile.gst_number}` : ''}
+                                                            {masterData?.clinicProfile?.gst_number && masterData?.clinicProfile?.registration_number ? ' | ' : ''}
+                                                            {masterData?.clinicProfile?.registration_number ? `Reg: ${masterData.clinicProfile.registration_number}` : ''}
+                                                        </p>
+                                                    )}
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="text-right">
@@ -1516,6 +1538,9 @@ Patient has been called for followup on ${clinicalData.nextVisitDate ? formatDat
                                                 <p className="font-bold text-gray-700 mb-1">Follow Up:</p>
                                                 {recordToPrint.data.nextVisitDate && (
                                                     <p className="text-sm font-bold text-gray-800">{isoToDisplay(recordToPrint.data.nextVisitDate)}</p>
+                                                )}
+                                                {masterData?.clinicProfile?.footer_text && (
+                                                    <p className="mt-2 text-xs font-medium text-gray-700 italic">{masterData.clinicProfile.footer_text}</p>
                                                 )}
                                             </div>
                                             <div className="text-center">

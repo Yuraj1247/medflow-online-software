@@ -3,7 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const { getDB } = require('../database');
 
-const SALT_ROUNDS = 10;
+const SALT_ROUNDS = 12;
 
 router.get('/', async (req, res) => {
     try {

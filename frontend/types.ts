@@ -192,9 +192,28 @@ export interface MasterData extends ClinicalPreferences {
   clinicName?: string;
   clinicAddress?: string;
   clinicContact?: string;
+  clinicProfile?: ClinicProfile;
 
   // Dynamic Medicine Types
   medicineTypes: string[];
+}
+
+export interface ClinicProfile {
+  id?: number;
+  clinic_name: string;
+  hospital_name: string;
+  logo: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  phone: string;
+  email: string;
+  website: string;
+  gst_number: string;
+  registration_number: string;
+  letterhead_enabled: number;
+  footer_text: string;
 }
 
 export interface SubscriptionStatus {

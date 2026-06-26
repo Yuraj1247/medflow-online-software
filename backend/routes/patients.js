@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDB } = require('../database');
+const { getDB, logAudit } = require('../database');
 
 // Get All (or Search)
 router.get('/', async (req, res) => {
@@ -66,6 +66,7 @@ router.post('/', async (req, res) => {
                     p.uhid
                 ]
             );
+            await logAudit(req, 'PATIENT_UPDATED', 'PATIENTS', `Patient updated: ${p.firstName} ${p.lastName} (${p.uhid})`);
         } else {
             // Insert
             await db.run(`INSERT INTO patients (
@@ -80,6 +81,7 @@ router.post('/', async (req, res) => {
                     p.referredBy, p.paymentBy, p.consultantName, p.idProofType, p.idProofNumber, p.purposeOfVisit,
                     p.visitCount || 0
                 ]);
+            await logAudit(req, 'PATIENT_ADDED', 'PATIENTS', `Patient registered: ${p.firstName} ${p.lastName} (${p.uhid})`);
         }
         res.json({ message: 'Saved successfully', uhid: p.uhid });
     } catch (e) {
@@ -93,6 +95,7 @@ router.delete('/:uhid', async (req, res) => {
     try {
         const db = await getDB();
         await db.run('DELETE FROM patients WHERE uhid = ?', [req.params.uhid]);
+        await logAudit(req, 'PATIENT_DELETED', 'PATIENTS', `Patient deleted: ${req.params.uhid}`);
         res.json({ message: 'Deleted' });
     } catch (e) {
         res.status(500).json({ error: e.message });

@@ -1,7 +1,36 @@
-node_modules
-dist
-dist-electron
-win-unpacked
-*.exe
-*.zip
+# Dependencies
+node_modules/
+
+# Environment files
 .env
+.env.*
+!.env.example
+
+# Production builds
+dist/
+build/
+
+# Testing & Coverage
+coverage/
+
+# Logs
+logs/
+*.log
+
+# Database files
+*.sqlite
+*.db
+
+# Uploads & Temp
+uploads/
+temp/
+
+# Editor directories and files
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

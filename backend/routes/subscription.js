@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { getDB } = require('../database');
+const { getDB, logAudit } = require('../database');
 const bcrypt = require('bcryptjs');
 
 const { developerAuth } = require('../middleware/developerAuth');
@@ -37,6 +37,8 @@ router.post('/update', developerAuth, async (req, res) => {
                 updated_at = CURRENT_TIMESTAMP
             WHERE id = 1
         `, [is_lifetime ? 1 : 0, start_date, end_date, today]);
+
+        await logAudit(req, 'SUBSCRIPTION_UPDATED', 'SUBSCRIPTION', `Subscription updated: Lifetime=${is_lifetime ? 1 : 0}, Start Date=${start_date}, End Date=${end_date}`, 'DEV', 'developer', 'DEVELOPER');
 
         res.json({ message: 'Subscription updated successfully', status: 'ACTIVE' });
     } catch (e) {
